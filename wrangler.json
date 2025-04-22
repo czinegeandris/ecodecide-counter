@@ -1,24 +1,20 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
   "name": "ecodecide-counter",
   "main": "src/index.ts",
-  "compatibility_date": "2025-04-01",
-  "upload_source_maps": true,
-  "migrations": [
-    {
-      "new_sqlite_classes": ["MyDurableObject"],
-      "tag": "v1"
-    }
-  ],
   "durable_objects": {
     "bindings": [
       {
-        "class_name": "MyDurableObject",
-        "name": "MY_DURABLE_OBJECT"
+        "name": "COUNTERS",
+        "class_name": "Counter"
       }
     ]
   },
-  "observability": {
-    "enabled": true
-  }
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "Counter"
+      ]
+    }
+  ]
 }
