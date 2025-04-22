@@ -1,66 +1,72 @@
 import { DurableObject } from "cloudflare:workers";
 
-/**
- * Welcome to Cloudflare Workers! This is your first Durable Objects application.
- *
- * - Run `npm run dev` in your terminal to start a development server
- * - Open a browser tab at http://localhost:8787/ to see your Durable Object in action
- * - Run `npm run deploy` to publish your application
- *
- * Bind resources to your worker in `wrangler.jsonc`. After adding bindings, a type definition for the
- * `Env` object can be regenerated with `npm run cf-typegen`.
- *
- * Learn more at https://developers.cloudflare.com/durable-objects
- */
-
-/** A Durable Object's behavior is defined in an exported Javascript class */
-export class MyDurableObject extends DurableObject<Env> {
-  /**
-   * The constructor is invoked once upon creation of the Durable Object, i.e. the first call to
-   * 	`DurableObjectStub::get` for a given identifier (no-op constructors can be omitted)
-   *
-   * @param ctx - The interface for interacting with Durable Object state
-   * @param env - The interface to reference bindings declared in wrangler.jsonc
-   */
-  constructor(ctx: DurableObjectState, env: Env) {
-    super(ctx, env);
-  }
-
-  /**
-   * The Durable Object exposes an RPC method sayHello which will be invoked when when a Durable
-   *  Object instance receives a request from a Worker via the same method invocation on the stub
-   *
-   * @param name - The name provided to a Durable Object instance from a Worker
-   * @returns The greeting to be sent back to the Worker
-   */
-  async sayHello(name: string): Promise<string> {
-    return `Hello, ${name}!`;
-  }
+export interface Env {
+  COUNTERS: DurableObjectNamespace<Counter>;
 }
 
+// Worker
 export default {
-  /**
-   * This is the standard fetch handler for a Cloudflare Worker
-   *
-   * @param request - The request submitted to the Worker from the client
-   * @param env - The interface to reference bindings declared in wrangler.jsonc
-   * @param ctx - The execution context of the Worker
-   * @returns The response to be sent back to the client
-   */
-  async fetch(request, env, ctx): Promise<Response> {
-    // Create a `DurableObjectId` for an instance of the `MyDurableObject`
-    // class named "foo". Requests from all Workers to the instance named
-    // "foo" will go to a single globally unique Durable Object instance.
-    const id: DurableObjectId = env.MY_DURABLE_OBJECT.idFromName("foo");
+  async fetch(request, env) {
+    let url = new URL(request.url);
+    let name = url.searchParams.get("name");
+    if (!name) {
+      return new Response(
+        "Select a Durable Object to contact by using" +
+          " the `name` URL query string parameter, for example, ?name=A",
+      );
+    }
 
-    // Create a stub to open a communication channel with the Durable
-    // Object instance.
-    const stub = env.MY_DURABLE_OBJECT.get(id);
+    // Every unique ID refers to an individual instance of the Counter class that
+    // has its own state. `idFromName()` always returns the same ID when given the
+    // same string as input (and called on the same class), but never the same
+    // ID for two different strings (or for different classes).
+    let id = env.COUNTERS.idFromName(name);
 
-    // Call the `sayHello()` RPC method on the stub to invoke the method on
-    // the remote Durable Object instance
-    const greeting = await stub.sayHello("world");
+    // Construct the stub for the Durable Object using the ID.
+    // A stub is a client Object used to send messages to the Durable Object.
+    let stub = env.COUNTERS.get(id);
 
-    return new Response(greeting);
+    let count = null;
+    switch (url.pathname) {
+      case "/increment":
+        count = await stub.increment();
+        break;
+      case "/decrement":
+        count = await stub.decrement();
+        break;
+      case "/":
+        // Serves the current value.
+        count = await stub.getCounterValue();
+        break;
+      default:
+        return new Response("Not found", { status: 404 });
+    }
+
+    return new Response(`Durable Object '${name}' count: ${count}`);
   },
 } satisfies ExportedHandler<Env>;
+
+// Durable Object
+export class Counter extends DurableObject {
+  async getCounterValue() {
+    let value = (await this.ctx.storage.get("value")) || 0;
+    return value;
+  }
+
+  async increment(amount = 1) {
+    let value: number = (await this.ctx.storage.get("value")) || 0;
+    value += amount;
+    // You do not have to worry about a concurrent request having modified the value in storage.
+    // "input gates" will automatically protect against unwanted concurrency.
+    // Read-modify-write is safe.
+    await this.ctx.storage.put("value", value);
+    return value;
+  }
+
+  async decrement(amount = 1) {
+    let value: number = (await this.ctx.storage.get("value")) || 0;
+    value -= amount;
+    await this.ctx.storage.put("value", value);
+    return value;
+  }
+}
